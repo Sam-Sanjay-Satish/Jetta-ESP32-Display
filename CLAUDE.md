@@ -1,13 +1,14 @@
 # ESP32 Jetta Gauge Display: Claude Code handover
 
-(Context as of 2026-11-18; updated after the v2 sniffing session. The 2026-11-18 handover from macvagdiag is folded in below.)
+(Context as of 2026-11-19, end of the firmware session. The 2026-11-18 handover from macvagdiag is folded in below; the 2026-11-19 session also re-checked the v2 captures in macvagdiag's `local/` for timing, flow control and the init sequence.)
 
 ## What this is
 A small always-on touchscreen gauge display for Sam's **2013 VW Jetta TDI**. It shows engine values the dash doesn't (v1: **oil temperature** and **exhaust gas temperature**) by asking the engine ECU for them over the OBD port's diagnostic CAN bus. **Major feature: instant fault code readout**, showing stored DTCs with a plain-language description (see "Fault codes (DTC readout)").
 
 - Owner: Sam (UVic CS student, new to embedded work; explain things simply, give direct and specific feedback).
-- Sister project: **macvagdiag** (Mac Java diagnostic tool, repo `Sam-Sanjay-Satish/Mac-VAG-Diagnostic-Tool`). Its first real capture decides bit rate, request IDs and protocol for this project.
-- Status: parts ordered 2026-10-26. ESP-IDF 5.4.1 installed; display bring-up done (see "Bench findings"). Car protocol mapped from sniffing sessions (see "Car diagnostic CAN: confirmed"). **EGT solved; oil temp is NOT available from the engine ECU** (see below). **Firmware written 2026-11-19** (tested core + ESP32 app, see "Software"); builds, but **not yet run on the board**.
+- Sister project: **macvagdiag** (Mac Java diagnostic tool, repo `Sam-Sanjay-Satish/Mac-VAG-Diagnostic-Tool`, local copy `~/Dev/Mac VAG Diagnostic Tool`). Its captures and notes decide bit rate, request IDs and protocol for this project. Most useful: its `CLAUDE.md`, `transport/` and `diag/CLAUDE.md`, `local/analysis/2026-11-13-sniffing-analysis.md` (DTC/freeze-frame layout, timing) and the v2 captures/CSVs in `local/captures/` and `local/vcds-logs/` (never copy them here: VIN/VCID).
+- Repo: GitHub `Sam-Sanjay-Satish/Jetta-ESP32-Display` (public, MIT). Commit only when Sam asks; one-line lowercase summaries like macvagdiag's.
+- Status: parts ordered 2026-10-26. ESP-IDF 5.4.1 installed; display bring-up done (see "Bench findings"). Car protocol mapped from sniffing sessions (see "Car diagnostic CAN: confirmed"). **EGT solved; oil temp is NOT available from the engine ECU** (see below). **Firmware written 2026-11-19** (tested core + ESP32 app, see "Software"; commit `bd9baf1`); builds, but **not yet run on the board** (it wasn't plugged in), so CPU load is unmeasured.
 - Constraint: **no soldering equipment**. Everything must be solderless (header pins, screw terminals, Wago lever connectors).
 
 ## Target car
@@ -176,14 +177,15 @@ Goal: show the car's stored fault codes on the display right away (at start-up a
 4. **Where does oil temp come from?** Check VCDS → 17-Instruments → Measuring Blocks for an oil temperature value (listen-only capture + VCDS log, like 2026-11-18). If it's there: which protocol, request and formula; then Sam decides whether rule 3 extends to the cluster.
 5. Does the engine answer mode 01 on physical `7E0` (VCDS only used `7DF`)?
 6. ~~Which request reads DTCs from the engine?~~ `18 00 FF 00` over TP 2.0, allowlisted 2026-11-19 (see "Fault codes"). **Still open:** where the descriptions come from.
-9. Does the engine answer `21 xx` without the `1A 9B` / `31 B8` steps VCDS does first? (phase 3)
 7. Is the transceiver's termination a jumper or a soldered resistor?
-8. Is the car's 12 V / USB socket ignition-switched?
+8. Is the car's 12 V / USB socket ignition-switched? (If it's always-on, revisit the 5 s probe: frames with the ignition off might wake the bus.)
+9. Does the engine answer `21 xx` without the `31 B8` step VCDS does first? (phase 3)
+10. **Waiting on Sam:** which measuring-block groups/fields go on the screen (each new group = an allowlist addition). Suggested: 011 boost specified/actual (P0299), 007 coolant/intake air. Also final warning thresholds (placeholders for now, Sam: fine for now).
 
 ## Next steps
-1. ~~Install ESP-IDF 5.4.1~~ done. ~~Display working~~ done. ~~v2 sniffing session~~ done 2026-11-18.
-2. Next car session: cluster (17) measuring blocks, listen-only, to find oil temp (open question 4).
-3. Same session (or next): capture a VCDS engine fault scan, listen-only, to get the DTC request/reply bytes (open question 6).
-4. ~~Project skeleton with the allowlist guard first~~ done 2026-11-19 (see "Software").
-5. Flash `firmware/` (PASSIVE, transmit off) on the bench board: check the screen, read the sysmon CPU/RAM log, wire the transceiver.
-6. Car phase 2 with that build while VCDS reads group 099: EGT should appear on screen, with 0 bus errors.
+1. ~~Install ESP-IDF 5.4.1~~ done. ~~Display working~~ done. ~~v2 sniffing session~~ done 2026-11-18. ~~Project skeleton with the allowlist guard first~~ done 2026-11-19 (see "Software").
+2. **Bench:** flash `firmware/` (default: PASSIVE, transmit off) on the bench board. Check the gauge screen draws correctly, read the sysmon CPU/RAM log (`tools/serial_log.py`), then wire the transceiver (open questions 1, 6).
+3. **Sam:** pick the measuring-block groups/fields for the screen (open question 10); add them to `guard.c`, `diag.c` (`TP20_POLLS`) and `store.c`, test first.
+4. **Car, phase 2:** that build in listen-only while VCDS reads group 099: EGT should appear on screen with 0 bus errors. Same session: cluster (17) measuring blocks, listen-only, to find oil temp (open question 4).
+5. **Car, phase 3:** enable transmit (menuconfig: mode + "Allow CAN transmit"). OBD mode first (`02 01 05` on `7E0`, open question 5), then TP20 mode (open question 9). VCDS fault scan before and after; CANable logging what the ESP32 sends.
+6. Fault-code page: request `18 00 FF 00` from `diag`, show P-codes (decoding ready), touch to browse when the replacement board arrives. Descriptions source still open.
