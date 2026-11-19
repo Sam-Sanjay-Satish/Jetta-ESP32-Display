@@ -7,7 +7,7 @@ A small always-on touchscreen gauge display for Sam's **2013 VW Jetta TDI**. It 
 
 - Owner: Sam (UVic CS student, new to embedded work; explain things simply, give direct and specific feedback).
 - Sister project: **macvagdiag** (Mac Java diagnostic tool, repo `Sam-Sanjay-Satish/Mac-VAG-Diagnostic-Tool`). Its first real capture decides bit rate, request IDs and protocol for this project.
-- Status: parts ordered 2026-10-26. ESP-IDF 5.4.1 installed; display bring-up done (see "Bench findings"). Car protocol mapped from sniffing sessions (see "Car diagnostic CAN: confirmed"). **EGT solved; oil temp is NOT available from the engine ECU** (see below). No CAN code yet.
+- Status: parts ordered 2026-10-26. ESP-IDF 5.4.1 installed; display bring-up done (see "Bench findings"). Car protocol mapped from sniffing sessions (see "Car diagnostic CAN: confirmed"). **EGT solved; oil temp is NOT available from the engine ECU** (see below). **Firmware written 2026-11-19** (tested core + ESP32 app, see "Software"); builds, but **not yet run on the board**.
 - Constraint: **no soldering equipment**. Everything must be solderless (header pins, screw terminals, Wago lever connectors).
 
 ## Target car
@@ -74,8 +74,29 @@ Other parts: SN65HVD230 CAN transceiver module (3.3 V; pins 3V3, GND, CTX, CRX; 
 - **Touch:** on the ES3C28P bench board nothing answered at 0x38 (or anywhere except 0x18) with any reset state, same as the stock firmware. Believed to be a hardware fault. A replacement touch board is on the way; `touch_ft6336.c` in `ripple_test/` is the starting point for its driver.
 - Reference code: `ripple_test/` is a throwaway test and is separate from the future gauge firmware.
 
-## Software layers (mirror macvagdiag)
-TWAI adapter, request guard/allowlist, transport (ISO-TP and/or TP 2.0), data service (PID or measuring block to value + unit), poll scheduler (rates, back-off), LVGL UI. Optional: log readings to microSD as CSV.
+## Software (written 2026-11-19, test-driven)
+```
+firmware/                        ESP-IDF project (idf.py build flash), LVGL 8.4 via managed component
+  components/jd_core/            pure C core: NO ESP-IDF calls, NO malloc, integer maths only
+    guard.c    allowlist (rules 1-3)          txgate.c  the ONE transmit path (rules 1, 4, 7)
+    isotp.c    OBD-II ISO-TP client           tp20.c    TP 2.0 channel (port of Tp20Channel.java)
+    decode.c   KWP formulas + OBD PIDs        sched.c   poll scheduler, back-off, quiet mode
+    store.c    latest value per signal        view.c    gauge text + warning levels (hysteresis)
+    sniff.c    passive decoder (listen-only)  diag.c    ties it all together per mode
+  main/        app_main.c (tasks), can_twai.c (TWAI), lcd.c (ILI9341V strips), ui.c (LVGL), sysmon.c
+  partitions.csv                 4 MB app + 8 MB `storage` (reserved: DTC text table, CSV logs)
+test/host/                       Unity tests for jd_core on the Mac: `make -C test/host`
+```
+- **TDD rule:** every jd_core change starts with a failing test in `test/host/` (clang, ASan + UBSan, `-Werror`). 132 tests. Key behaviours were checked by mutation (break the code, a test must fail).
+- **Transmit path:** `jd_isotp`/`jd_tp20` → `jd_txgate_send` (listen-only? latched halt? `jd_guard_check`?) → `can_hw_send` → `twai_transmit`. Nothing else calls `twai_transmit`. A guard refusal latches a permanent halt (it means a bug). Bus-off, error-passive or TEC/REC ≥ 96 also latch a halt until reboot. `app_main` aborts at boot if the guard passes known-forbidden frames.
+- **Build switches** (`idf.py menuconfig` → "Jetta display"): `JD_MODE` = PASSIVE (default) / OBD / TP20; `JD_CAN_TX_ENABLE` (default **off**: TWAI runs `TWAI_MODE_LISTEN_ONLY`, so it can't send anything, not even ACKs). Transmit needs both a non-passive mode and the switch.
+- **PASSIVE mode** decodes another tester's traffic (engine replies on `300` and `7E8`), so phase 2 already shows live EGT on screen while VCDS polls group 099.
+- **Polling (OBD mode):** PID 78 every 1 s, 0C every 2 s, 05 every 5 s, never closer than 300 ms (≈1.7 req/s). TP20 mode: group 099 every 1 s. On failure an item backs off (×2, max 30 s); after 5 failures in a row the scheduler goes quiet (one probe every 5 s). A TP 2.0 channel that won't open is retried after 2, 4, then every 5 s.
+- **Tasks:** `can_rx` (core 0, prio 10) → queue → `diag` (core 0, prio 8, owns all of jd_core) → snapshot → `ui` (core 1, prio 3; labels refresh at 5 Hz and only when their text/colour changed). `sysmon` logs CPU busy % per core, free internal RAM and stack headroom every 30 s.
+- **Budget (2026-11-19 build):** image 609 KB (85% of the 4 MB app partition free; LVGL + fonts are 346 KB of it, jd_core 7 KB). Static internal RAM 97 KB of 342 KB (LVGL's 32 KB pool included); at runtime + 38 KB LVGL draw buffers (2 × 240×40 px instead of a 150 KB frame buffer) + ~20 KB stacks. PSRAM (8 MB) unused. CPU load: measure on the first run (sysmon log).
+- **Decisions to confirm with Sam / on the car (all are named constants):** warning thresholds in `view.h` are PLACEHOLDERS (EGT 700/800 °C, coolant 110/118, oil 130/140); PID 78 sensor 1 is assumed pre-turbo (`store.c`). Settled 2026-11-19: allowlist additions `02 01 0C`, `A1` keep-alive answer, flow control, `1A 9B`, `18 00 FF 00` and `12 00 04 [hi] [lo]` (only the DTC number is free) approved by Sam (flow control then changed to the captured `30 00 01`); keep-alive 500 ms; when the ECU is silent, one probe every 5 s and TP 2.0 reopen every 5 s at most (Sam: 30 s was too slow; the display is on an ignition-switched socket, so a silent ECU is usually still waking up).
+- **Measuring blocks:** a `21 xx` request always returns the whole group (4 VCDS fields); the screen can mix fields from several groups, each group costing one request per refresh. Only group 099 is allowlisted; 011 (boost), 007 (coolant) etc. wait for Sam's choice.
+- **Not done yet:** touch (FT6336G) + BOOT-button pages, DTC readout in `diag` + screen (requests and decoding are ready), oil temp source, brightness/auto-sleep, CSV logging.
 
 ## Car diagnostic CAN: confirmed (sniffing sessions 2026-11-13 and 2026-11-18)
 Listen-only captures with the CANable + macvagdiag `can-log` while VCDS talked. Raw captures and VCDS CSVs are in macvagdiag's git-ignored `local/captures/` and `local/vcds-logs/` (they contain the VIN / VCID: never commit them). v2 captures: `2026-11-18-002922.log` (groups 007/099/100), `2026-11-18-003345.log` (001/011/033), `2026-11-18-003611.log` (OBD-II mode 01). All 0 errors.
@@ -97,7 +118,11 @@ Packet byte 0 is `[op][seq]`: op `0` more + ACK wanted, `1` last + ACK wanted, `
 
 **Timing lessons (from macvagdiag's real transmit, 2026-11-17):** wait **~20 ms after your ACK** before the next request (VCDS waits 18–27 ms; less makes modules miss the ACK and resend ~150 ms later, or answer `9x`). On `9x` naming the packet just sent: wait for the ready ACK and resend (with a cap). A repeated packet (same seq and bytes): ACK again and drop it. Response pending `7F xx 78` comes with length `80 03` (mask bit 15, keep waiting). Port macvagdiag's `transport/.../Tp20Channel.java` and its tests.
 
-**VCDS polling rhythm (2026-11-18):** with 3 groups open, one `21 xx` request every **~140 ms** (~7/s total, round-robin), plus `740#A3` keep-alive about every **0.55 s**, even while polling. Treat that as the ceiling; the ESP32 should poll much slower (rule 4). No `9x` replies in any v2 capture.
+**What VCDS sends before reading groups (2026-11-18 `003345` capture, engine channel from setup):** `10 89` → `1A 9B` (identification) → `31 B8 00 00` (**routine control: never allowed**) → `1A 91` → then only `21 xx`. Our firmware sends `10 89` → `1A 9B` (approved 2026-11-19; a refusal is ignored) → `21 xx`. **Whether the engine answers `21 xx` without `31 B8` is UNCONFIRMED**: the first thing the phase-3 TP 2.0 test shows. `31 B8` stays forbidden (rule 2); if the engine insists on it, the OBD-II PID 78 route is the fallback.
+
+**Group replies (2026-11-18, 1950 replies over 6 groups):** always 4 packets (`2x 2x 2x 1x`, one ACK), 25–33 ms after the request, never `7F` or `78`. The formula byte of each field never changed between samples, so each field can be decoded with a fixed formula. Formula `21` (duty cycle, group 011): `21 FF FF` = 100.0 % ✓ VCDS. Formula `1F` (033 fields 3–4, `1F 50 20` = 1.00 in VCDS) and `32` (100 fields 3–4, DPF pressure, `32 27 82` = 5 mbar) **can't be pinned down from these samples** (one value / rounding ambiguous): still shown as no value.
+
+**VCDS polling rhythm (2026-11-18):** with 3 groups open, one `21 xx` request every **~140 ms** (~7/s total, round-robin), plus `740#A3` keep-alive about every **0.55 s** (0.49–0.64 s), even while polling. Our keep-alive is 500 ms (`JD_TP20_KEEPALIVE_MS`). How long the engine keeps an idle channel open was never measured, so don't go slower than VCDS. When a module sends `A3` itself, VCDS answers `A1 0F 64 9C [module T3] 9C`; we (like macvagdiag) answer `A1 0F 8A FF 32 FF` (allowlisted; unverified but it worked for macvagdiag). Treat that as the ceiling; the ESP32 should poll much slower (rule 4). No `9x` replies in any v2 capture.
 
 ### Measuring blocks (KWP `21 <group>`, VCDS group number decimal → hex)
 Reply: `61 <group>` then 8 triplets `[formula] [a] [b]` (24 bytes). **Only the first 4 triplets are VCDS's fields 1–4**; the rest are placeholders (`25 00 00`, `30 00 00`). Formula `25` with `00 00` = **no value** (VCDS shows a blank).
@@ -119,6 +144,7 @@ Supported PIDs (decoded from the `00/20/40/60/80` bitmaps): 01 04 05 0C 0D 10 13
 - `78` reply (ISO-TP, 2 frames): `41 78 0F` + 4 sensors × 2 bytes, °C = value/10 − 40. Idle sample: `084F` 172.7, `0708` 140.0, `06F2` 137.8, `062B` 117.9 (sensor 1 should be pre-turbo; check against group 099 before relying on it).
 - VCDS sent mode 01 to the **functional `7DF`**, which rule 3 forbids. The ESP32 must use **physical `7E0`**. The engine answered `09 02` on `7E0` (2026-11-13), so `7E0` mode 01 is expected to work but is **not yet proven**; it's the first thing phase 3 checks.
 - `7E9` (the DSG) also answers `7DF`; ignore it.
+- **Flow control:** VCDS sent `7E0#30 00 01 00 00 00 00 00` (STmin 1 ms) before every PID 78 second frame (329×). We send exactly that. The engine answered `7DF` in 1–13 ms.
 
 ## Where the data comes from
 - **EGT: solved.** Primary: TP 2.0 group 099 field 2 (`21 63`, EGT before turbo). Alternative: OBD-II PID `78` on `7E0` (simpler ISO-TP single-frame request).
@@ -130,7 +156,7 @@ Whichever route works, its exact request bytes go into the allowlist: for TP 2.0
 ## Fault codes (DTC readout): planned major feature
 Goal: show the car's stored fault codes on the display right away (at start-up and on demand), each with a plain-language description, so Sam doesn't need a laptop to see why a light came on.
 - **Read only.** Reading DTCs is allowed; **clearing them stays forbidden** (rule 2: no `14`, no OBD-II mode `04`). Request bytes go in the allowlist like any other.
-- **Candidate requests (UNCONFIRMED; capture VCDS/macvagdiag doing a fault scan first, listen-only, like 2026-11-18):** KWP2000 over the TP 2.0 engine channel, read DTCs by status (`18 ...`); or OBD-II mode `03` (stored) / `07` (pending) on physical `7E0`.
+- **Engine fault-code request is known (macvagdiag, 2026-11-13 capture, and macvagdiag's own scan on the car 2026-11-18 matched VCDS):** KWP `18 00 FF 00` over the TP 2.0 engine channel (the engine wants status `00`; other KWP modules `18 02 FF 00`). Reply `58 [count] ([hi][lo][status])…`. **P-code = `P` + the 16-bit value in hex** (`04 01` → P0401); VCDS's 6-digit number = its decimal. Status: bit 7 = MIL on, bit 6 clear = intermittent, bits 0–4 = the "- 00x" sub-type. Freeze frame per DTC: `12 00 04 [hi] [lo]` (once per list entry, in order: the ECU keeps a cursor). Layout and decoding: macvagdiag `diag/CLAUDE.md` and `local/analysis/2026-11-13-sniffing-analysis.md` §5. **On the allowlist since 2026-11-19 (Sam approved)**, with `jd_kwp_parse_dtcs` / `jd_dtc_pcode` decoding it (tested on the 12 captured engine faults); not yet requested by `diag` or shown on screen. OBD-II mode `03` on `7E0` was never captured.
 - **Engine only for now** (rule 3). Codes from other modules (DSG, ABS, airbag, cluster) would need Sam's approval to extend rule 3.
 - **Descriptions:** a code → text table stored in flash. Generic SAE P-code descriptions are fine to use. **Don't copy Ross-Tech/VCDS's text or database** (proprietary); write descriptions ourselves or use openly licensed sources, since the repo is public (MIT).
 - UI: readable list with code, short description and status (stored/pending/intermittent). Touch to scroll/open details when parked; nothing that needs touch while driving.
@@ -149,7 +175,8 @@ Goal: show the car's stored fault codes on the display right away (at start-up a
 3. ~~Which groups hold oil temp and EGT?~~ EGT: group 099 field 2. Oil temp: the engine has none (group 007 field 2 empty).
 4. **Where does oil temp come from?** Check VCDS → 17-Instruments → Measuring Blocks for an oil temperature value (listen-only capture + VCDS log, like 2026-11-18). If it's there: which protocol, request and formula; then Sam decides whether rule 3 extends to the cluster.
 5. Does the engine answer mode 01 on physical `7E0` (VCDS only used `7DF`)?
-6. **Which request reads DTCs from the CJAA engine, and what's the reply format?** (KWP `18` over TP 2.0 vs OBD-II mode `03` on `7E0`; capture a VCDS fault scan.) Where do descriptions come from?
+6. ~~Which request reads DTCs from the engine?~~ `18 00 FF 00` over TP 2.0, allowlisted 2026-11-19 (see "Fault codes"). **Still open:** where the descriptions come from.
+9. Does the engine answer `21 xx` without the `1A 9B` / `31 B8` steps VCDS does first? (phase 3)
 7. Is the transceiver's termination a jumper or a soldered resistor?
 8. Is the car's 12 V / USB socket ignition-switched?
 
@@ -157,4 +184,6 @@ Goal: show the car's stored fault codes on the display right away (at start-up a
 1. ~~Install ESP-IDF 5.4.1~~ done. ~~Display working~~ done. ~~v2 sniffing session~~ done 2026-11-18.
 2. Next car session: cluster (17) measuring blocks, listen-only, to find oil temp (open question 4).
 3. Same session (or next): capture a VCDS engine fault scan, listen-only, to get the DTC request/reply bytes (open question 6).
-4. Create the project skeleton with the allowlist guard first (with host-side tests), before any code that can transmit.
+4. ~~Project skeleton with the allowlist guard first~~ done 2026-11-19 (see "Software").
+5. Flash `firmware/` (PASSIVE, transmit off) on the bench board: check the screen, read the sysmon CPU/RAM log, wire the transceiver.
+6. Car phase 2 with that build while VCDS reads group 099: EGT should appear on screen, with 0 bus errors.

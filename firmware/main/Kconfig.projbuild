@@ -1,0 +1,38 @@
+menu "Jetta display"
+
+    choice JD_MODE
+        prompt "Diagnostic mode"
+        default JD_MODE_PASSIVE
+        help
+            PASSIVE: listen only and decode another tester's traffic (phase 2).
+            OBD: poll OBD-II mode 01 on 7E0 (phase 3 demo route).
+            TP20: poll KWP group 099 over VW TP 2.0.
+            OBD and TP20 transmit ONLY if JD_CAN_TX_ENABLE is also set.
+
+        config JD_MODE_PASSIVE
+            bool "Passive (listen only)"
+        config JD_MODE_OBD
+            bool "OBD-II mode 01 (7E0)"
+        config JD_MODE_TP20
+            bool "TP 2.0 group 099"
+    endchoice
+
+    config JD_CAN_TX_ENABLE
+        bool "Allow CAN transmit (HARD RULE 7: only after listen-only is proven on the car)"
+        default n
+        help
+            Off: the TWAI controller runs in listen-only mode and cannot put a single bit
+            on the bus (not even ACKs). On: allowlisted requests only, through the gate.
+
+    config JD_TWAI_TX_GPIO
+        int "TWAI TX GPIO (to transceiver CTX)"
+        default 2
+    config JD_TWAI_RX_GPIO
+        int "TWAI RX GPIO (from transceiver CRX)"
+        default 3
+
+    config JD_SYSMON_PERIOD_S
+        int "Log CPU / RAM headroom every N seconds (0 = off)"
+        default 30
+
+endmenu

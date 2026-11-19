@@ -2,7 +2,6 @@
 build/
 sdkconfig.old
 managed_components/
-dependencies.lock
 
 # Editor / OS
 .vscode/
@@ -16,3 +15,4 @@ logs/*.log
 # Python
 __pycache__/
 *.pyc
+.clangd

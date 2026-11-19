@@ -1,0 +1,7 @@
+# 16 MB flash. Room to grow: 4 MB app (now ~0.6 MB), 8 MB reserved for the fault-code
+# description table and CSV logs.
+# Name,    Type, SubType, Offset,  Size
+nvs,       data, nvs,     0x9000,  0x6000
+phy_init,  data, phy,     0xf000,  0x1000
+factory,   app,  factory, 0x10000, 4M
+storage,   data, fat,     ,        8M
