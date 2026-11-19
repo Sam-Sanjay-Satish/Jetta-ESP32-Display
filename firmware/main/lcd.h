@@ -1,4 +1,4 @@
-// ILI9341V 240x320 over SPI, drawing rectangles (no full frame buffer: LVGL renders
+// ILI9341V over SPI, landscape 320x240 (menuconfig picks which way up), drawing rectangles (no full frame buffer: LVGL renders
 // small strips, so only what changed is sent). Init sequence and settings are the
 // ones proven on the bench in ripple_test (CLAUDE.md "Display settings that work").
 #pragma once
@@ -7,8 +7,8 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-#define LCD_W 240
-#define LCD_H 320
+#define LCD_W 320
+#define LCD_H 240
 
 typedef void (*lcd_done_cb_t)(void *ctx);
 

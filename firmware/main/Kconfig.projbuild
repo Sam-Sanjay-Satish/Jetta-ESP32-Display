@@ -31,6 +31,25 @@ menu "Jetta display"
         int "TWAI RX GPIO (from transceiver CRX)"
         default 3
 
+    choice JD_LCD_ROTATION
+        prompt "Screen orientation (landscape)"
+        default JD_LCD_LANDSCAPE_A
+        help
+            Two ways up for the landscape screen. If the picture is upside down, pick the other.
+        config JD_LCD_LANDSCAPE_A
+            bool "Landscape A (MADCTL 0x68)"
+        config JD_LCD_LANDSCAPE_B
+            bool "Landscape B (MADCTL 0xA8, rotated 180 degrees)"
+    endchoice
+
+    config JD_DEMO
+        bool "Demo mode: show FAKE values (for trying the screen without a car)"
+        default n
+        help
+            The gauges show generated values (main/demo.c) instead of the ECU's, and the
+            status line says DEMO - FAKE VALUES. CAN still runs as configured above.
+            Never leave this on in the car.
+
     config JD_SYSMON_PERIOD_S
         int "Log CPU / RAM headroom every N seconds (0 = off)"
         default 30

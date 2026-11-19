@@ -8,6 +8,8 @@ typedef enum {
     JD_SIG_COOLANT,
     JD_SIG_OIL,       // no source yet (engine has none; cluster TBD)
     JD_SIG_RPM,
+    JD_SIG_BOOST_SPEC, // group 011 field 2, mbar absolute
+    JD_SIG_BOOST_ACT,  // group 011 field 3, mbar absolute
     JD_SIG_COUNT
 } jd_signal_t;
 
@@ -25,7 +27,7 @@ typedef struct {
 } jd_store_t;
 
 void jd_store_init(jd_store_t *s);
-// Recognises 61 63 (group 099), 61 07 (group 007), 41 05 / 41 0C / 41 78.
+// Recognises 61 63 (group 099), 61 07 (group 007), 61 0B (group 011), 41 05 / 41 0C / 41 78.
 // Returns how many signals it updated (0 = not a message we use).
 int  jd_store_apply(jd_store_t *s, const uint8_t *msg, size_t len, uint32_t now);
 // The reading if it is fresh, else NULL.

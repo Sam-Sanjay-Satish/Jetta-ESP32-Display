@@ -16,6 +16,7 @@ static struct {
     int        pending_count;
     uint8_t    eng_seq;       // TP 2.0: engine's own sequence counter
     bool       pid78_cf_due;
+    int        group_reads[256]; // 21 xx requests the fake engine received, by group
     int        setups, keepalives;
     bool       drop_channel_once;
     bool       refuse_ident;
@@ -67,6 +68,19 @@ static void fake_tp20(const jd_frame_t *f)
         if (f->data[3] == 0x10) { tp_data("00 02 50 89", 0x1); return; }
         if (f->data[3] == 0x1A && bus.refuse_ident) { tp_data("00 03 7F 1A 11", 0x1); return; }
         if (f->data[3] == 0x1A) { tp_data("00 08 5A 9B 30 33 4C", 0x2); tp_data("39 39 37", 0x1); return; }
+        if (f->data[3] == 0x21) bus.group_reads[f->data[4]]++;
+        if (f->data[3] == 0x21 && f->data[4] == 0x0B) { // group 011: RPM, boost spec 2300, actual 2000
+            tp_data("00 1A 61 0B 01 73 24", 0x2);
+            tp_data("60 FA 5C 60 FA 50 21", 0x2);
+            tp_data("FF 80 25 00 00 25 00", 0x2);
+            tp_data("00 30 00 00 30 00 00", 0x1);
+        }
+        if (f->data[3] == 0x21 && f->data[4] == 0x07) { // group 007: coolant 67.5
+            tp_data("00 1A 61 07 05 09 8F", 0x2);
+            tp_data("25 00 00 05 09 83 05", 0x2);
+            tp_data("09 AF 25 00 00 25 00", 0x2);
+            tp_data("00 30 00 00 30 00 00", 0x1);
+        }
         if (f->data[3] == 0x21 && f->data[4] == 0x63) {
             tp_data("00 1A 61 63 01 73 24", 0x2);
             tp_data("05 3C 7F 05 3C 79 05", 0x2);
@@ -220,13 +234,16 @@ static void test_bus_fault_stops_everything(void)
 
 // ---------------------------------------------------------------- TP 2.0
 
-static void test_tp20_reads_group_099(void)
+static void test_tp20_reads_boost_and_coolant(void)
 {
     start(ECU_TP20, JD_MODE_TP20, true);
     run(3000);
-    const jd_reading_t *egt = jd_store_get(&d.store, JD_SIG_EGT, now);
-    TEST_ASSERT_NOT_NULL(egt);
-    TEST_ASSERT_EQUAL(1620, egt->value.value);
+    const jd_reading_t *act = jd_store_get(&d.store, JD_SIG_BOOST_ACT, now);
+    TEST_ASSERT_NOT_NULL(act);
+    TEST_ASSERT_EQUAL(20000, act->value.value);
+    TEST_ASSERT_EQUAL(23000, jd_store_get(&d.store, JD_SIG_BOOST_SPEC, now)->value.value);
+    TEST_ASSERT_EQUAL(675, jd_store_get(&d.store, JD_SIG_COOLANT, now)->value.value);
+    TEST_ASSERT_EQUAL(0, bus.group_reads[0x63]); // no EGT on screen for now: 099 not polled
     TEST_ASSERT_EQUAL(1, bus.setups);
     TEST_ASSERT_EQUAL(JD_LINK_OK, jd_diag_link(&d, now));
     TEST_ASSERT_EQUAL(JD_HALT_NONE, gate.halt);
@@ -234,10 +251,10 @@ static void test_tp20_reads_group_099(void)
 
 static void test_tp20_opens_like_vcds(void)
 {
-    // VCDS: 10 89, 1A 9B, (31 B8: never), 1A 91, then 21 xx. We: 10 89, 1A 9B, 21 63.
+    // VCDS: 10 89, 1A 9B, (31 B8: never), 1A 91, then 21 xx. We: 10 89, 1A 9B, 21 0B.
     start(ECU_TP20, JD_MODE_TP20, true);
     run(2000);
-    const char *expect[] = { "10 89", "1A 9B", "21 63" };
+    const char *expect[] = { "10 89", "1A 9B", "21 0B" };
     int k = 0;
     for (int i = 0; i < bus.sent_count && k < 3; i++) {
         const jd_frame_t *f = &bus.sent[i];
@@ -255,7 +272,7 @@ static void test_tp20_identification_refused_is_not_fatal(void)
     start(ECU_TP20, JD_MODE_TP20, true);
     bus.refuse_ident = true;
     run(3000);
-    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_EGT, now));
+    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_BOOST_ACT, now));
     TEST_ASSERT_EQUAL(1, bus.setups);
 }
 
@@ -265,9 +282,14 @@ static void test_tp20_long_run_stays_up(void)
     run(120000);
     TEST_ASSERT_EQUAL(1, bus.setups);            // one channel the whole time
     TEST_ASSERT_TRUE(jd_tp20_is_open(&d.tp));
-    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_EGT, now));
+    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_BOOST_ACT, now));
+    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_COOLANT, now));
+    // Rule 4: 011 every 0.5 s + 007 every 5 s = 2.2 requests/s, +2 for the session/ident.
     int requests = count_sent(0x740, 0x10, 0xF0);
-    TEST_ASSERT_TRUE(requests <= 120000 / 1000 + 2); // ~1 group read per second
+    TEST_ASSERT_TRUE(requests <= 120000 / 500 + 120000 / 5000 + 2 + 2);
+    TEST_ASSERT_TRUE(bus.group_reads[0x0B] >= 120000 / 500 - 10);   // boost graph gets 2 points/s
+    TEST_ASSERT_TRUE(bus.group_reads[0x07] >= 120000 / 5000 - 2);
+    TEST_ASSERT_TRUE(bus.group_reads[0x07] <= 120000 / 5000 + 1);
     // A3 keeps coming while we poll, like VCDS (~every 0.55 s)
     TEST_ASSERT_TRUE_MESSAGE(bus.keepalives >= 120000 / 650, "keep-alive too rare while polling");
 }
@@ -290,7 +312,7 @@ static void test_tp20_reconnects_after_engine_closes(void)
     bus.drop_channel_once = true;
     run(10000);
     TEST_ASSERT_EQUAL(2, bus.setups);
-    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_EGT, now));
+    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_BOOST_ACT, now));
 }
 
 int main(void)
@@ -303,7 +325,7 @@ int main(void)
     RUN_TEST(test_probe_interval_is_short);
     RUN_TEST(test_obd_silent_ecu_goes_quiet);
     RUN_TEST(test_bus_fault_stops_everything);
-    RUN_TEST(test_tp20_reads_group_099);
+    RUN_TEST(test_tp20_reads_boost_and_coolant);
     RUN_TEST(test_tp20_opens_like_vcds);
     RUN_TEST(test_tp20_identification_refused_is_not_fatal);
     RUN_TEST(test_tp20_long_run_stays_up);

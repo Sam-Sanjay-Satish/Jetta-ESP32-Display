@@ -25,6 +25,10 @@ typedef struct {
 #define JD_OIL_CRIT_C      140
 #define JD_LEVEL_HYST_C    10
 
+// Boost is shown as gauge pressure (Sam, 2026-11-19): absolute - standard atmosphere.
+// Fixed, not measured: near sea level the error is a few tens of mbar.
+#define JD_BOOST_ATMOS_MBAR 1013
+
 typedef struct {
     char       text[12];  // "162", "--"
     jd_level_t level;
@@ -39,6 +43,10 @@ const jd_thresholds_t *jd_view_thresholds(jd_signal_t sig);
 jd_level_t jd_level_eval(jd_level_t prev, int32_t whole, const jd_thresholds_t *t);
 // Rounds a value to whole units (half away from zero).
 int32_t jd_value_whole(const jd_value_t *v);
+
+// The number shown for a signal, in whole display units (boost: gauge mbar).
+// False if there is no fresh reading.
+bool jd_view_number(const jd_store_t *s, jd_signal_t sig, uint32_t now, int32_t *out);
 
 void jd_view_init(jd_view_t *v);
 void jd_view_gauge(jd_view_t *v, const jd_store_t *s, jd_signal_t sig, uint32_t now, jd_gauge_view_t *out);

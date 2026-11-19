@@ -6,6 +6,7 @@
 //   ui      core 1, prio 3   LVGL gauges, redraws only what changed
 //   sysmon  core 0, prio 1   CPU/RAM headroom log
 #include "can_twai.h"
+#include "demo.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -96,6 +97,10 @@ static void diag_task(void *arg)
             .can_ok = s_can_ok, .halt = s_gate.halt, .rx_frames = st.rx_frames, .replies = s_diag.replies,
             .tx_sent = s_gate.sent, .rx_errors = st.rx_errors, .tx_errors = st.tx_errors,
         };
+#if CONFIG_JD_DEMO
+        snap.demo = true;
+        demo_fill(&snap.store, now); // fake values only on screen: diag keeps its real store
+#endif
         ui_publish(&snap);
 
         if (now - last_log >= LOG_MS) {
@@ -114,6 +119,9 @@ void app_main(void)
 {
     guard_self_test();
     bool tx = TX_BUILD_ENABLED && MODE != JD_MODE_PASSIVE;
+#if CONFIG_JD_DEMO
+    ESP_LOGW(TAG, "DEMO MODE: the screen shows FAKE values");
+#endif
     ESP_LOGW(TAG, "Jetta display: mode %s, transmit %s", MODE == JD_MODE_OBD ? "OBD" : MODE == JD_MODE_TP20 ? "TP2.0" : "PASSIVE",
              tx ? "ENABLED (allowlist only)" : "OFF (listen-only)");
 

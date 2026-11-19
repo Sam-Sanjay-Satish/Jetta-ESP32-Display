@@ -21,6 +21,9 @@ int jd_store_apply(jd_store_t *s, const uint8_t *msg, size_t len, uint32_t now)
             return put(s, JD_SIG_RPM, &f[0], now) + put(s, JD_SIG_EGT, &f[1], now);
         if (jd_kwp_parse_group(msg, len, 0x07, f)) // group 007: fuel, oil (empty here), IAT, coolant
             return put(s, JD_SIG_OIL, &f[1], now) + put(s, JD_SIG_COOLANT, &f[3], now);
+        if (jd_kwp_parse_group(msg, len, 0x0B, f)) // group 011: RPM, boost specified, actual, duty
+            return put(s, JD_SIG_RPM, &f[0], now) + put(s, JD_SIG_BOOST_SPEC, &f[1], now) +
+                   put(s, JD_SIG_BOOST_ACT, &f[2], now);
         return 0;
     }
     if (msg[0] == 0x41) {

@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "lcd";
 
@@ -32,7 +33,15 @@ static void cmd(uint8_t c, const uint8_t *d, size_t n)
 }
 #define CMD(c, ...) do { const uint8_t d_[] = {__VA_ARGS__}; cmd(c, d_, sizeof d_); } while (0)
 
-// Vendor init (reference/ILI9341V_Init.txt). Inversion ON, BGR, portrait, no mirroring.
+// Landscape MADCTL values from the vendor table (reference/ILI9341V_Init.txt, directions 1 and 3):
+// BGR | MV (swap rows/columns) | MX or MY. Portrait was 0x08 (proven on the bench).
+#if CONFIG_JD_LCD_LANDSCAPE_B
+#define MADCTL 0xA8
+#else
+#define MADCTL 0x68
+#endif
+
+// Vendor init (reference/ILI9341V_Init.txt). Inversion ON, BGR, landscape, no mirroring.
 static void vendor_init(void)
 {
     CMD(0xCF, 0x00, 0xC1, 0x30);
@@ -54,7 +63,7 @@ static void vendor_init(void)
     CMD(0xE0, 0x0F, 0x35, 0x31, 0x0B, 0x0E, 0x06, 0x49, 0xA7, 0x33, 0x07, 0x0F, 0x03, 0x0C, 0x0A, 0x00);
     CMD(0xE1, 0x00, 0x0A, 0x0F, 0x04, 0x11, 0x08, 0x36, 0x58, 0x4D, 0x07, 0x10, 0x0C, 0x32, 0x34, 0x0F);
     cmd(0x21, NULL, 0);           // inversion on
-    CMD(0x36, 0x08);              // MADCTL: BGR
+    CMD(0x36, MADCTL);            // MADCTL: BGR + landscape
 }
 
 esp_err_t lcd_init(int spi_hz, size_t max_transfer_bytes, lcd_done_cb_t done_cb, void *ctx)

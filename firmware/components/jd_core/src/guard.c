@@ -15,6 +15,9 @@ const jd_allow_entry_t jd_allowlist[] = {
     { "tp20 ACK Bn",        0x740, 1, {0xB0},                                     SEQ },
     { "kwp session 10 89",  0x740, 5, {0x10, 0x00, 0x02, 0x10, 0x89},             SEQ },
     { "kwp group 099 EGT",  0x740, 5, {0x10, 0x00, 0x02, 0x21, 0x63},             SEQ },
+    // Approved 2026-11-19: group 007 (temperatures: coolant) and 011 (boost specified/actual).
+    { "kwp group 007 temps", 0x740, 5, {0x10, 0x00, 0x02, 0x21, 0x07},            SEQ },
+    { "kwp group 011 boost", 0x740, 5, {0x10, 0x00, 0x02, 0x21, 0x0B},            SEQ },
     // Approved 2026-11-19: identification (VCDS sends it before group reads), engine fault codes
     // and freeze frames (bytes as macvagdiag reads them on this car).
     { "kwp ident 1A 9B",    0x740, 5, {0x10, 0x00, 0x02, 0x1A, 0x9B},             SEQ },

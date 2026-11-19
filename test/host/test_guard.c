@@ -97,6 +97,16 @@ static void test_wrong_length_or_padding_refused(void)
     TEST_ASSERT_FALSE(allowed(0x740, ""));
 }
 
+static void test_approved_groups_allowed(void)
+{
+    // Approved 2026-11-19: 007 temperatures (coolant), 011 boost; 099 EGT since the start.
+    TEST_ASSERT_TRUE(allowed(0x740, "10 00 02 21 07"));
+    TEST_ASSERT_TRUE(allowed(0x740, "1F 00 02 21 0B"));
+    TEST_ASSERT_TRUE(allowed(0x740, "13 00 02 21 63"));
+    TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 21 0C"));
+    TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 21 0B 00"));
+}
+
 static void test_forbidden_services_refused(void)
 {
     // KWP2000 over TP 2.0 (rule 2)
@@ -110,7 +120,7 @@ static void test_forbidden_services_refused(void)
     TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 30 01")); // IO control
     TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 28 01")); // comm control
     TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 85 02")); // DTC setting
-    TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 21 07")); // group not approved yet
+    TEST_ASSERT_FALSE(allowed(0x740, "10 00 02 21 01")); // group not approved
     // OBD-II / UDS on 7E0
     TEST_ASSERT_FALSE(allowed(0x7E0, "01 04 00 00 00 00 00 00")); // mode 04 clear codes
     TEST_ASSERT_FALSE(allowed(0x7E0, "02 10 02 00 00 00 00 00")); // UDS programming
@@ -194,6 +204,7 @@ int main(void)
     RUN_TEST(test_obd_mode01_physical_padded);
     RUN_TEST(test_functional_broadcast_refused);
     RUN_TEST(test_wrong_length_or_padding_refused);
+    RUN_TEST(test_approved_groups_allowed);
     RUN_TEST(test_forbidden_services_refused);
     RUN_TEST(test_tp20_multi_packet_ops_refused);
     RUN_TEST(test_oversized_frame_refused);

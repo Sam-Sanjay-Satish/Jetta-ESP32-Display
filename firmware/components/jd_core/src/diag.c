@@ -14,7 +14,9 @@ static const poll_def_t OBD_POLLS[] = {
     { { 0x01, 0x05 }, 2, 5000 },  // coolant (changes slowly)
 };
 static const poll_def_t TP20_POLLS[] = {
-    { { 0x21, 0x63 }, 2, 1000 },  // group 099: RPM + EGT
+    // Group 099 (EGT) is allowlisted but not on screen for now (Sam, 2026-11-19).
+    { { 0x21, 0x0B }, 2, 500 },   // group 011: RPM + boost specified/actual (the graph: 2 points/s)
+    { { 0x21, 0x07 }, 2, 5000 },  // group 007: coolant (changes slowly)
 };
 // What we send after opening the channel, before any group read. VCDS (2026-11-18):
 // 10 89, 1A 9B, 31 B8 00 00 (routine control: never), 1A 91. Only the session is required;

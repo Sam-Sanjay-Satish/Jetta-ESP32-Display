@@ -35,6 +35,47 @@ static void test_store_group_007_coolant_but_no_oil(void)
     TEST_ASSERT_NULL(jd_store_get(&st, JD_SIG_OIL, 0)); // field 2 is empty on this ECU
 }
 
+// Group 011 layout from the 2026-11-18 capture: RPM, boost specified, boost actual (formula 60,
+// mbar absolute), duty cycle. Byte values here are constructed (60 FA 28 = 250*40/10 = 1000.0 mbar).
+static const uint8_t group_011[] = { 0x61, 0x0B,
+    0x01, 0x73, 0x24,  0x60, 0xFA, 0x5C,  0x60, 0xFA, 0x50,  0x21, 0xFF, 0x80,
+    0x25, 0x00, 0x00,  0x25, 0x00, 0x00,  0x30, 0x00, 0x00,  0x30, 0x00, 0x00 };
+
+static void test_store_group_011_boost(void)
+{
+    TEST_ASSERT_EQUAL(3, jd_store_apply(&st, group_011, sizeof group_011, 0));
+    const jd_reading_t *spec = jd_store_get(&st, JD_SIG_BOOST_SPEC, 0);
+    const jd_reading_t *act = jd_store_get(&st, JD_SIG_BOOST_ACT, 0);
+    TEST_ASSERT_NOT_NULL(spec);
+    TEST_ASSERT_NOT_NULL(act);
+    TEST_ASSERT_EQUAL(23000, spec->value.value); // 250 * 92 / 10 = 2300.0 mbar
+    TEST_ASSERT_EQUAL(20000, act->value.value);  // 250 * 80 / 10 = 2000.0 mbar
+    TEST_ASSERT_EQUAL(JD_UNIT_MBAR, act->value.unit);
+    TEST_ASSERT_EQUAL(8280, jd_store_get(&st, JD_SIG_RPM, 0)->value.value);
+}
+
+static void test_no_levels_for_boost(void)
+{
+    jd_gauge_view_t g;
+    jd_store_apply(&st, group_011, sizeof group_011, 0);
+    jd_view_gauge(&vw, &st, JD_SIG_BOOST_SPEC, 0, &g);
+    TEST_ASSERT_EQUAL_STRING("1287", g.text); // gauge pressure: 2300 absolute - 1013
+    TEST_ASSERT_EQUAL(JD_LEVEL_OK, g.level);
+}
+
+static void test_view_number_boost_is_gauge_pressure(void)
+{
+    int32_t n = 0;
+    TEST_ASSERT_FALSE(jd_view_number(&st, JD_SIG_BOOST_ACT, 0, &n)); // no data yet
+    jd_store_apply(&st, group_011, sizeof group_011, 0);
+    TEST_ASSERT_TRUE(jd_view_number(&st, JD_SIG_BOOST_ACT, 0, &n));
+    TEST_ASSERT_EQUAL(2000 - JD_BOOST_ATMOS_MBAR, n);
+    TEST_ASSERT_FALSE(jd_view_number(&st, JD_SIG_BOOST_ACT, JD_STORE_STALE_MS, &n)); // stale
+    jd_store_apply(&st, group_007, sizeof group_007, 0);
+    TEST_ASSERT_TRUE(jd_view_number(&st, JD_SIG_COOLANT, 0, &n));
+    TEST_ASSERT_EQUAL(68, n); // temperatures unchanged (67.5 rounds to 68)
+}
+
 static void test_store_obd(void)
 {
     const uint8_t c[] = { 0x41, 0x05, 0x6B };
@@ -190,6 +231,9 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_store_group_099);
     RUN_TEST(test_store_group_007_coolant_but_no_oil);
+    RUN_TEST(test_store_group_011_boost);
+    RUN_TEST(test_no_levels_for_boost);
+    RUN_TEST(test_view_number_boost_is_gauge_pressure);
     RUN_TEST(test_store_obd);
     RUN_TEST(test_store_ignores_other_messages);
     RUN_TEST(test_store_staleness);
