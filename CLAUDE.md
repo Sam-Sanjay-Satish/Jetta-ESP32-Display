@@ -3,7 +3,7 @@
 (Context as of 2026-11-18; updated after the v2 sniffing session. The 2026-11-18 handover from macvagdiag is folded in below.)
 
 ## What this is
-A small always-on touchscreen gauge display for Sam's **2013 VW Jetta TDI**. It shows engine values the dash doesn't (v1: **oil temperature** and **exhaust gas temperature**) by asking the engine ECU for them over the OBD port's diagnostic CAN bus.
+A small always-on touchscreen gauge display for Sam's **2013 VW Jetta TDI**. It shows engine values the dash doesn't (v1: **oil temperature** and **exhaust gas temperature**) by asking the engine ECU for them over the OBD port's diagnostic CAN bus. **Major feature: instant fault code readout**, showing stored DTCs with a plain-language description (see "Fault codes (DTC readout)").
 
 - Owner: Sam (UVic CS student, new to embedded work; explain things simply, give direct and specific feedback).
 - Sister project: **macvagdiag** (Mac Java diagnostic tool, repo `Sam-Sanjay-Satish/Mac-VAG-Diagnostic-Tool`). Its first real capture decides bit rate, request IDs and protocol for this project.
@@ -17,7 +17,7 @@ A small always-on touchscreen gauge display for Sam's **2013 VW Jetta TDI**. It 
 - The gateway (J533) keeps internal traffic off the OBD port: with no tester connected the bus is completely silent (60 s, 0 frames, confirmed). The display has to send requests and read replies.
 
 ## Hardware
-**Board: LCDWIKI ES3N28P (no touch)** is the target. The board currently on the bench is an ES3C28P whose touch chip never answered (see "Bench findings"); a no-touch ES3N28P has been ordered. **No touch in the product:** pages are cycled with the BOOT button (GPIO0) or automatically, with no touch driver and no LVGL input device. ESP32-S3-WROOM-1 (16 MB flash), 2.8" IPS 240x320, ILI9341V display (SPI), FT6336G capacitive touch (I2C).
+**Board: LCDWIKI ES3C28P (with touch)** is the target. The board on the bench is an ES3C28P whose touch chip never answered (see "Bench findings"); **a replacement touch board is on the way (2026-11-18) and touch will be used once it arrives** (FT6336G driver + LVGL input device, e.g. for browsing pages and fault codes when parked). A no-touch ES3N28P was ordered earlier; it's a fallback only. Everything needed while driving must still work without touch (rule 8): the BOOT button (GPIO0) or automatic page cycling. ESP32-S3-WROOM-1 (16 MB flash), 2.8" IPS 240x320, ILI9341V display (SPI), FT6336G capacitive touch (I2C).
 
 Other parts: SN65HVD230 CAN transceiver module (3.3 V; pins 3V3, GND, CTX, CRX; screw terminal CANH/CANL; likely a 2-pin termination jumper), OBD-II male to open-wire pigtail (colours not standard; map pins with a multimeter), female-female Dupont wires, Wago 221-413 connectors, car USB charger in an ignition-switched 12 V socket + USB-C cable.
 
@@ -34,7 +34,7 @@ Other parts: SN65HVD230 CAN transceiver module (3.3 V; pins 3V3, GND, CTX, CRX; 
 | UART0 socket: RXD0 / TXD0 | 43 / 44 |
 | **Free expansion IO (1.25 mm 4-pin socket)** | **2, 3, 14, 21** |
 
-**CAN pin plan: TWAI TX = GPIO2, TWAI RX = GPIO3.** IO14 and IO21 stay spare. Do not use IO15/16/17/18 (I2C bus shared with the audio codec, plus the unused touch lines). The UART pins aren't needed, because USB-C handles flashing and logs.
+**CAN pin plan: TWAI TX = GPIO2, TWAI RX = GPIO3.** IO14 and IO21 stay spare. Do not use IO15/16/17/18 (I2C bus shared by the touch chip and the audio codec, plus touch RST/INT). The UART pins aren't needed, because USB-C handles flashing and logs.
 
 ### Wiring
 | From | To |
@@ -71,7 +71,7 @@ Other parts: SN65HVD230 CAN transceiver module (3.3 V; pins 3V3, GND, CTX, CRX; 
 - **Display settings that work** (`ripple_test/main/main.c`): ILI9341V, colour inversion ON, BGR order, no mirroring, portrait 240x320. Needs the vendor init sequence (`reference/ILI9341V_Init.txt`), reset via software command (no reset GPIO).
 - **SPI clock: use 40 MHz (25 FPS full-frame).** 80 MHz gave 50 FPS but the HUD flickered and shifted sideways, so don't use it. A full-frame push is limited by SPI. Draw only what changed, or keep frames cheap, if more speed is needed.
 - Display code (`display_ili9341.c`, full-frame DMA push in 8 chunks) is reusable for the gauge firmware.
-- **Touch:** on the ES3C28P bench board nothing answered at 0x38 (or anywhere except 0x18) with any reset state, same as the stock firmware. Believed to be a hardware fault. Touch is not needed (see Board).
+- **Touch:** on the ES3C28P bench board nothing answered at 0x38 (or anywhere except 0x18) with any reset state, same as the stock firmware. Believed to be a hardware fault. A replacement touch board is on the way; `touch_ft6336.c` in `ripple_test/` is the starting point for its driver.
 - Reference code: `ripple_test/` is a throwaway test and is separate from the future gauge firmware.
 
 ## Software layers (mirror macvagdiag)
@@ -127,12 +127,21 @@ Supported PIDs (decoded from the `00/20/40/60/80` bitmaps): 01 04 05 0C 0D 10 13
 
 Whichever route works, its exact request bytes go into the allowlist: for TP 2.0 to the engine, the `200` setup for address `01` only, `A0`, `A3`, `A8`, ACKs, `10 89`, `21 63` (and any other approved groups); for OBD-II, exact `7E0` frames such as `02 01 78`, `02 01 05`.
 
+## Fault codes (DTC readout): planned major feature
+Goal: show the car's stored fault codes on the display right away (at start-up and on demand), each with a plain-language description, so Sam doesn't need a laptop to see why a light came on.
+- **Read only.** Reading DTCs is allowed; **clearing them stays forbidden** (rule 2: no `14`, no OBD-II mode `04`). Request bytes go in the allowlist like any other.
+- **Candidate requests (UNCONFIRMED; capture VCDS/macvagdiag doing a fault scan first, listen-only, like 2026-11-18):** KWP2000 over the TP 2.0 engine channel, read DTCs by status (`18 ...`); or OBD-II mode `03` (stored) / `07` (pending) on physical `7E0`.
+- **Engine only for now** (rule 3). Codes from other modules (DSG, ABS, airbag, cluster) would need Sam's approval to extend rule 3.
+- **Descriptions:** a code → text table stored in flash. Generic SAE P-code descriptions are fine to use. **Don't copy Ross-Tech/VCDS's text or database** (proprietary); write descriptions ourselves or use openly licensed sources, since the repo is public (MIT).
+- UI: readable list with code, short description and status (stored/pending/intermittent). Touch to scroll/open details when parked; nothing that needs touch while driving.
+
 ## Phases
-1. **Bench bring-up (current):** display running (done), transceiver wired to GPIO2/3. No car. Touch is no longer required.
+1. **Bench bring-up (current):** display running (done), transceiver wired to GPIO2/3. No car. Bring up touch on the replacement board when it arrives.
 2. **Listen-only on the car** at 500 kbit/s with VCDS or macvagdiag talking. Confirm clean frames and no bus errors. (The CANable + `can-log` can also record exactly what the ESP32 sends, to verify its allowlist on the car.)
 3. **One read:** a single allowlisted request (e.g. coolant PID `05` on `7E0`, which also proves physical mode 01) shown as text. Before/after VCDS scans to confirm no new faults.
 4. **v1 gauges:** EGT + oil temp (source TBD), poll scheduler, back-off, warning thresholds, optional beep.
-5. **Polish:** gauge pages, brightness, mount/enclosure (heat, sun), auto-sleep when the ECU stops replying.
+5. **Fault code readout (major feature):** read stored DTCs from the engine and show code + description (see "Fault codes (DTC readout)").
+6. **Polish:** gauge pages, brightness, mount/enclosure (heat, sun), auto-sleep when the ECU stops replying.
 
 ## Open questions
 1. Which socket on the board provides 3.3 V and GND for the CAN module, and what is the expansion socket's pin order? (Check the printed labels or a photo.)
@@ -140,10 +149,12 @@ Whichever route works, its exact request bytes go into the allowlist: for TP 2.0
 3. ~~Which groups hold oil temp and EGT?~~ EGT: group 099 field 2. Oil temp: the engine has none (group 007 field 2 empty).
 4. **Where does oil temp come from?** Check VCDS → 17-Instruments → Measuring Blocks for an oil temperature value (listen-only capture + VCDS log, like 2026-11-18). If it's there: which protocol, request and formula; then Sam decides whether rule 3 extends to the cluster.
 5. Does the engine answer mode 01 on physical `7E0` (VCDS only used `7DF`)?
-6. Is the transceiver's termination a jumper or a soldered resistor?
-7. Is the car's 12 V / USB socket ignition-switched?
+6. **Which request reads DTCs from the CJAA engine, and what's the reply format?** (KWP `18` over TP 2.0 vs OBD-II mode `03` on `7E0`; capture a VCDS fault scan.) Where do descriptions come from?
+7. Is the transceiver's termination a jumper or a soldered resistor?
+8. Is the car's 12 V / USB socket ignition-switched?
 
 ## Next steps
 1. ~~Install ESP-IDF 5.4.1~~ done. ~~Display working~~ done. ~~v2 sniffing session~~ done 2026-11-18.
 2. Next car session: cluster (17) measuring blocks, listen-only, to find oil temp (open question 4).
-3. Create the project skeleton with the allowlist guard first (with host-side tests), before any code that can transmit.
+3. Same session (or next): capture a VCDS engine fault scan, listen-only, to get the DTC request/reply bytes (open question 6).
+4. Create the project skeleton with the allowlist guard first (with host-side tests), before any code that can transmit.
