@@ -1,0 +1,18 @@
+# ESP-IDF build output
+build/
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Serial and car logs (may contain CAN data later; never commit VIN/VCID)
+logs/*.log
+!logs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
