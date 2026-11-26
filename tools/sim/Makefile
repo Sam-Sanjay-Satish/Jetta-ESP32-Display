@@ -9,7 +9,7 @@ CC    := clang
 CFLAGS := -std=gnu11 -O1 -DLV_CONF_INCLUDE_SIMPLE -I. -I$(LVGL) -I$(FW)/main -I$(FW)/components/jd_core/include
 LV_SRC := $(shell find $(LVGL)/src -name '*.c')
 LV_OBJ := $(patsubst $(LVGL)/%.c,build/lvgl/%.o,$(LV_SRC))
-APP_SRC := sim.c $(FW)/main/gauges.c $(FW)/main/demo.c $(wildcard $(FW)/components/jd_core/src/*.c)
+APP_SRC := sim.c $(FW)/main/gauges.c $(FW)/main/pages.c $(FW)/main/demo.c $(wildcard $(FW)/components/jd_core/src/*.c)
 
 .PHONY: all clean
 all: build/sim
@@ -18,7 +18,7 @@ all: build/sim
 	@for f in out/*.ppm; do sips -s format png "$$f" --out "$${f%.ppm}.png" >/dev/null && rm -f "$$f"; done
 	@ls out/*.png
 
-build/sim: $(LV_OBJ) $(APP_SRC) $(FW)/main/gauges.h $(FW)/main/demo.h lv_conf.h
+build/sim: $(LV_OBJ) $(APP_SRC) $(FW)/main/gauges.h $(FW)/main/pages.h $(FW)/main/demo.h lv_conf.h
 	$(CC) $(CFLAGS) -Wall -Wextra -Werror -o $@ $(APP_SRC) $(LV_OBJ) -lm
 
 build/lvgl/%.o: $(LVGL)/%.c lv_conf.h

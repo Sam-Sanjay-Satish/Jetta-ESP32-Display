@@ -5,9 +5,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "gauges.h"
 #include "lcd.h"
 #include "lvgl.h"
+#include "pages.h"
+#include "touch.h"
 
 static const char *TAG = "ui";
 
@@ -30,6 +31,22 @@ static void flush_cb(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *px)
     if (lcd_draw(a->x1, a->y1, a->x2, a->y2, px) != ESP_OK) lv_disp_flush_ready(&s_drv);
 }
 
+// Touch: LVGL polls this every LV_INDEV_DEF_READ_PERIOD (30 ms) from this task.
+static void touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
+{
+    (void)drv;
+    static lv_point_t last; // LVGL wants the last point on release too
+    int x, y;
+    if (touch_get(&x, &y)) {
+        last.x = (lv_coord_t)x;
+        last.y = (lv_coord_t)y;
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+    data->point = last;
+}
+
 // ---------------------------------------------------------------- task
 
 static void ui_task(void *arg)
@@ -49,7 +66,14 @@ static void ui_task(void *arg)
     s_drv.draw_buf = &draw_buf;
     ESP_ERROR_CHECK(lcd_init(SPI_HZ, px * sizeof(lv_color_t), flush_done, &s_drv));
     lv_disp_drv_register(&s_drv);
-    gauges_build(lv_scr_act());
+    if (touch_init() == ESP_OK) {
+        static lv_indev_drv_t indev;
+        lv_indev_drv_init(&indev);
+        indev.type = LV_INDEV_TYPE_POINTER;
+        indev.read_cb = touch_cb;
+        lv_indev_drv_register(&indev);
+    }
+    pages_build();
     lv_timer_handler();     // first full frame
     lcd_backlight(true);
 
@@ -67,7 +91,7 @@ static void ui_task(void *arg)
             xSemaphoreTake(s_lock, portMAX_DELAY);
             if (s_have_snap) { snap = s_snap; have = true; }
             xSemaphoreGive(s_lock);
-            if (have) gauges_refresh(&snap, now);
+            if (have) pages_refresh(&snap, now);
         }
         uint32_t wait = lv_timer_handler();
         if (wait > 50) wait = 50;

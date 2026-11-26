@@ -46,8 +46,8 @@ menu "Jetta display"
         bool "Demo mode: show FAKE values (for trying the screen without a car)"
         default n
         help
-            The gauges show generated values (main/demo.c) instead of the ECU's, and the
-            status line says DEMO - FAKE VALUES. CAN still runs as configured above.
+            The gauges show generated values (main/demo.c) instead of the ECU's; the
+            diagnostics page (swipe left) says so. CAN still runs as configured above.
             Never leave this on in the car.
 
     config JD_SYSMON_PERIOD_S

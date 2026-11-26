@@ -5,12 +5,13 @@
 
 // ---------------------------------------------------------------- layout and ranges
 
-#define TOP_Y      22   // below the status line
-#define BOTTOM_Y   218  // above the counters line
+#define TOP_Y      22   // below the warning line
+#define BOTTOM_Y   218
 
 #define BAR_W      64
-#define BAR_Y      58
-#define BAR_H      142
+#define BAR_Y      (TOP_Y + 6)
+#define BAR_H      164
+#define BAR_TITLE_Y (BAR_Y + BAR_H + 6)  // the title sits under the bar
 #define COL_W      74
 
 // Bar ranges in degrees C. The bottom is "cold engine", the top is past the critical level.
@@ -38,7 +39,6 @@
 #define COL_CRIT    lv_color_hex(0xFF3030)
 #define COL_ACT     lv_color_hex(0x00D0FF)
 #define COL_SPEC    lv_color_hex(0xB0B0B0)
-#define COL_DEMO    lv_color_hex(0xFF40FF)
 
 // ---------------------------------------------------------------- widgets
 
@@ -63,8 +63,8 @@ static bar_gauge_t g_cool = { .sig = JD_SIG_COOLANT, .min = COOL_MIN, .max = COO
 static num_t       n_act = { .sig = JD_SIG_BOOST_ACT }, n_spec = { .sig = JD_SIG_BOOST_SPEC };
 static lv_obj_t   *s_chart;
 static lv_chart_series_t *s_ser_spec, *s_ser_act;
-static lv_obj_t   *l_status, *l_info;
-static char        status_text[32], info_text[64];
+static lv_obj_t   *l_status;  // warnings only: empty when all is well
+static char        status_text[32];
 static jd_view_t   s_view;
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, int x, int y, const char *text)
@@ -94,13 +94,8 @@ static int bar_y_of(const bar_gauge_t *g, int c) // screen y of temperature c on
 
 static void build_bar(lv_obj_t *scr, bar_gauge_t *g, int x, const char *title)
 {
-    char buf[8];
     int bx = x + (COL_W - BAR_W) / 2;
-    centred_label(scr, &lv_font_montserrat_14, lv_color_white(), x, TOP_Y, COL_W, title);
-    snprintf(buf, sizeof buf, "%d", g->max);
-    centred_label(scr, &lv_font_montserrat_14, COL_DIM, x, BAR_Y - 18, COL_W, buf);
-    snprintf(buf, sizeof buf, "%d", g->min);
-    centred_label(scr, &lv_font_montserrat_14, COL_DIM, x, BAR_Y + BAR_H + 2, COL_W, buf);
+    centred_label(scr, &lv_font_montserrat_14, lv_color_white(), x, BAR_TITLE_Y, COL_W, title);
 
     g->bar = lv_bar_create(scr);
     lv_obj_set_pos(g->bar, bx, BAR_Y);
@@ -135,7 +130,7 @@ static void build_bar(lv_obj_t *scr, bar_gauge_t *g, int x, const char *title)
 
 static void build_boost(lv_obj_t *scr)
 {
-    label(scr, &lv_font_montserrat_14, lv_color_white(), GRAPH_X, TOP_Y, "BOOST  mbar");
+    label(scr, &lv_font_montserrat_14, lv_color_white(), GRAPH_X, TOP_Y, "BOOST (mbar)");
     label(scr, &lv_font_montserrat_14, COL_ACT, GRAPH_X, TOP_Y + 18, "ACTUAL");
     label(scr, &lv_font_montserrat_14, COL_SPEC, GRAPH_X + GRAPH_W / 2 + 4, TOP_Y + 18, "SPEC");
     n_act.value = label(scr, &lv_font_montserrat_28, COL_ACT, GRAPH_X, TOP_Y + 34, "--");
@@ -153,6 +148,7 @@ static void build_boost(lv_obj_t *scr)
     lv_obj_set_style_bg_opa(s_chart, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_chart, lv_color_hex(0x303030), LV_PART_MAIN);
     lv_obj_set_style_border_width(s_chart, 1, LV_PART_MAIN);
+    lv_obj_clear_flag(s_chart, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE); // swipes go to the screen
     lv_obj_set_style_radius(s_chart, 4, LV_PART_MAIN);
     lv_obj_set_style_line_color(s_chart, lv_color_hex(0x262626), LV_PART_MAIN); // grid
     lv_obj_set_style_pad_all(s_chart, 3, LV_PART_MAIN);
@@ -171,11 +167,10 @@ void gauges_build(lv_obj_t *scr)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    l_status = label(scr, &lv_font_montserrat_14, COL_DIM, 4, 2, "");
-    build_bar(scr, &g_oil, 2, "OIL \xC2\xB0" "C");
-    build_bar(scr, &g_cool, 2 + COL_W + 4, "COOL \xC2\xB0" "C");
+    l_status = label(scr, &lv_font_montserrat_14, COL_CRIT, 4, 2, "");
+    build_bar(scr, &g_oil, 2, "OIL (\xC2\xB0" "C)");
+    build_bar(scr, &g_cool, 2 + COL_W + 4, "COOL (\xC2\xB0" "C)");
     build_boost(scr);
-    l_info = label(scr, &lv_font_montserrat_14, COL_FAINT, 4, GAUGES_H - 18, "");
 }
 
 // ---------------------------------------------------------------- refresh
@@ -232,21 +227,6 @@ static lv_coord_t refresh_num(num_t *n, const jd_store_t *st, uint32_t now)
     return jd_view_number(st, n->sig, now, &x) ? (lv_coord_t)x : LV_CHART_POINT_NONE;
 }
 
-static lv_color_t link_color(jd_link_t l)
-{
-    switch (l) {
-    case JD_LINK_OK:     return lv_color_hex(0x30D158);
-    case JD_LINK_HALTED: return COL_CRIT;
-    case JD_LINK_LISTEN: return lv_color_hex(0x40A0FF);
-    default:             return COL_DIM;
-    }
-}
-
-static const char *mode_name(jd_mode_t m)
-{
-    return m == JD_MODE_OBD ? "OBD" : m == JD_MODE_TP20 ? "TP2.0" : "PASSIVE";
-}
-
 void gauges_refresh(const ui_snapshot_t *s, uint32_t now)
 {
     refresh_bar(&g_oil, &s->store, now);
@@ -256,20 +236,10 @@ void gauges_refresh(const ui_snapshot_t *s, uint32_t now)
     lv_chart_set_next_value(s_chart, s_ser_spec, spec);
     lv_chart_set_next_value(s_chart, s_ser_act, act);
 
+    // Normal link state and the counters live on the diagnostics page (pages.c).
     char buf[sizeof status_text];
-    lv_color_t color;
-    if (s->demo) { snprintf(buf, sizeof buf, "DEMO - FAKE VALUES"); color = COL_DEMO; }
-    else if (!s->can_ok) { snprintf(buf, sizeof buf, "CAN ERROR"); color = COL_CRIT; }
-    else if (s->link == JD_LINK_HALTED) { snprintf(buf, sizeof buf, "TX HALTED: %s", jd_halt_name(s->halt)); color = COL_CRIT; }
-    else { snprintf(buf, sizeof buf, "%s  %s", jd_link_name(s->link), mode_name(s->mode)); color = link_color(s->link); }
-    if (strcmp(buf, status_text) != 0) {
-        lv_obj_set_style_text_color(l_status, color, 0);
-        set_text(l_status, status_text, sizeof status_text, buf);
-    }
-
-    char ibuf[sizeof info_text];
-    snprintf(ibuf, sizeof ibuf, "rx %lu  rep %lu  tx %lu  err %lu/%lu", (unsigned long)s->rx_frames,
-             (unsigned long)s->replies, (unsigned long)s->tx_sent, (unsigned long)s->rx_errors,
-             (unsigned long)s->tx_errors);
-    set_text(l_info, info_text, sizeof info_text, ibuf);
+    if (!s->can_ok) snprintf(buf, sizeof buf, "CAN ERROR");
+    else if (s->link == JD_LINK_HALTED) snprintf(buf, sizeof buf, "TX HALTED: %s", jd_halt_name(s->halt));
+    else buf[0] = '\0';
+    set_text(l_status, status_text, sizeof status_text, buf);
 }

@@ -1,11 +1,13 @@
 // Renders the firmware's gauge page on the Mac with the demo values, so the layout can be
-// checked without the board. Usage: sim OUTDIR SECONDS... (writes OUTDIR/screen_<s>.ppm)
+// checked without the board. Usage: sim OUTDIR SECONDS... (writes OUTDIR/screen_<s>.ppm and
+// OUTDIR/diag_<s>.ppm, the diagnostics page at the same moment)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "demo.h"
 #include "gauges.h"
 #include "lvgl.h"
+#include "pages.h"
 
 static lv_color_t fb[GAUGES_W * GAUGES_H];
 
@@ -16,10 +18,10 @@ static void flush(lv_disp_drv_t *d, const lv_area_t *a, lv_color_t *px)
     lv_disp_flush_ready(d);
 }
 
-static void save(const char *dir, int sec)
+static void save(const char *dir, const char *name, int sec)
 {
     char path[512];
-    snprintf(path, sizeof path, "%s/screen_%03d.ppm", dir, sec);
+    snprintf(path, sizeof path, "%s/%s_%03d.ppm", dir, name, sec);
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); exit(1); }
     fprintf(f, "P6\n%d %d\n255\n", GAUGES_W, GAUGES_H);
@@ -46,7 +48,7 @@ int main(int argc, char **argv)
     drv.flush_cb = flush;
     drv.draw_buf = &db;
     lv_disp_drv_register(&drv);
-    gauges_build(lv_scr_act());
+    pages_build();
 
     ui_snapshot_t snap;
     memset(&snap, 0, sizeof snap);
@@ -55,10 +57,18 @@ int main(int argc, char **argv)
     int next = 2;
     for (uint32_t now = 0; next < argc; now += 100) { // same cadence as the firmware
         demo_fill(&snap.store, now);
-        if (now % 200 == 0) gauges_refresh(&snap, now);
+        if (now % 200 == 0) pages_refresh(&snap, now);
         lv_tick_inc(100);
         lv_timer_handler();
-        if (now == (uint32_t)atoi(argv[next]) * 1000u) save(argv[1], atoi(argv[next++]));
+        if (now == (uint32_t)atoi(argv[next]) * 1000u) {
+            int sec = atoi(argv[next++]);
+            save(argv[1], "screen", sec);
+            pages_show(PAGE_DIAG);
+            lv_refr_now(NULL);
+            save(argv[1], "diag", sec);
+            pages_show(PAGE_GAUGES);
+            lv_refr_now(NULL);
+        }
     }
     return 0;
 }
