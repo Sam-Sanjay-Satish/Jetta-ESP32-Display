@@ -234,7 +234,7 @@ static void test_bus_fault_stops_everything(void)
 
 // ---------------------------------------------------------------- TP 2.0
 
-static void test_tp20_reads_boost_and_coolant(void)
+static void test_tp20_reads_boost_coolant_and_egt(void)
 {
     start(ECU_TP20, JD_MODE_TP20, true);
     run(3000);
@@ -243,10 +243,29 @@ static void test_tp20_reads_boost_and_coolant(void)
     TEST_ASSERT_EQUAL(20000, act->value.value);
     TEST_ASSERT_EQUAL(23000, jd_store_get(&d.store, JD_SIG_BOOST_SPEC, now)->value.value);
     TEST_ASSERT_EQUAL(675, jd_store_get(&d.store, JD_SIG_COOLANT, now)->value.value);
-    TEST_ASSERT_EQUAL(0, bus.group_reads[0x63]); // no EGT on screen for now: 099 not polled
+    // Group 099 field 2, EGT before turbo (Sam 2026-11-25: EGT back on screen).
+    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_EGT, now));
+    TEST_ASSERT_EQUAL(1620, jd_store_get(&d.store, JD_SIG_EGT, now)->value.value);
     TEST_ASSERT_EQUAL(1, bus.setups);
     TEST_ASSERT_EQUAL(JD_LINK_OK, jd_diag_link(&d, now));
     TEST_ASSERT_EQUAL(JD_HALT_NONE, gate.halt);
+}
+
+static void test_tp20_request_rate_is_gentle(void)
+{
+    // Rule 4: a few requests per second. 011 every 500 ms + 099 every 2 s + 007 every 5 s = 2.7/s.
+    start(ECU_TP20, JD_MODE_TP20, true);
+    run(5000);
+    int before = 0, egt_before = bus.group_reads[0x63];
+    for (int g = 0; g < 256; g++) before += bus.group_reads[g];
+    run(60000);
+    int reads = -before;
+    for (int g = 0; g < 256; g++) reads += bus.group_reads[g];
+    // Planned 2.7/s; collisions with the 300 ms gap delay items (next turn counts from the send),
+    // so the real rate is a little lower (~2.5/s), never higher.
+    TEST_ASSERT_TRUE(reads <= 162 + 2);
+    TEST_ASSERT_TRUE(reads >= 140);
+    TEST_ASSERT_INT_WITHIN(3, 29, bus.group_reads[0x63] - egt_before); // EGT about every 2 s
 }
 
 static void test_tp20_opens_like_vcds(void)
@@ -284,10 +303,14 @@ static void test_tp20_long_run_stays_up(void)
     TEST_ASSERT_TRUE(jd_tp20_is_open(&d.tp));
     TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_BOOST_ACT, now));
     TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_COOLANT, now));
-    // Rule 4: 011 every 0.5 s + 007 every 5 s = 2.2 requests/s, +2 for the session/ident.
+    TEST_ASSERT_NOT_NULL(jd_store_get(&d.store, JD_SIG_EGT, now));
+    // Rule 4: 011 every 0.5 s + 099 every 2 s + 007 every 5 s = 2.7 requests/s, +2 for the session/ident.
     int requests = count_sent(0x740, 0x10, 0xF0);
-    TEST_ASSERT_TRUE(requests <= 120000 / 500 + 120000 / 5000 + 2 + 2);
-    TEST_ASSERT_TRUE(bus.group_reads[0x0B] >= 120000 / 500 - 10);   // boost graph gets 2 points/s
+    TEST_ASSERT_TRUE(requests <= 120000 / 500 + 120000 / 2000 + 120000 / 5000 + 2 + 2);
+    TEST_ASSERT_TRUE(bus.group_reads[0x63] >= 120000 / 2000 * 9 / 10);
+    // Boost: ~1.86 reads/s with 099 in the mix (collisions with the 300 ms gap); the graph still
+    // gets a point every UI refresh (200 ms) from the latest value.
+    TEST_ASSERT_TRUE(bus.group_reads[0x0B] >= 120000 / 500 * 9 / 10);
     TEST_ASSERT_TRUE(bus.group_reads[0x07] >= 120000 / 5000 - 2);
     TEST_ASSERT_TRUE(bus.group_reads[0x07] <= 120000 / 5000 + 1);
     // A3 keeps coming while we poll, like VCDS (~every 0.55 s)
@@ -325,7 +348,8 @@ int main(void)
     RUN_TEST(test_probe_interval_is_short);
     RUN_TEST(test_obd_silent_ecu_goes_quiet);
     RUN_TEST(test_bus_fault_stops_everything);
-    RUN_TEST(test_tp20_reads_boost_and_coolant);
+    RUN_TEST(test_tp20_reads_boost_coolant_and_egt);
+    RUN_TEST(test_tp20_request_rate_is_gentle);
     RUN_TEST(test_tp20_opens_like_vcds);
     RUN_TEST(test_tp20_identification_refused_is_not_fatal);
     RUN_TEST(test_tp20_long_run_stays_up);

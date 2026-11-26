@@ -3,6 +3,7 @@
 
 static uint32_t s_rng = 12345;
 static float    s_act = 1000.0f;   // actual boost follows specified with a lag
+static float    s_egt = 180.0f;    // EGT follows load with a slower lag
 static uint32_t s_last_ms;
 static bool     s_started;
 
@@ -54,4 +55,10 @@ void demo_fill(jd_store_t *s, uint32_t now)
     put(s, JD_SIG_BOOST_SPEC, spec, JD_UNIT_MBAR, now);
     put(s, JD_SIG_BOOST_ACT, s_act + noise(12.0f), JD_UNIT_MBAR, now);
     put(s, JD_SIG_RPM, 820.0f + (spec - 1010.0f) * 1.4f + noise(8.0f), JD_UNIT_RPM, now);
+
+    // EGT before turbo: ~180 C at idle, ~500 C on a pull, past 800 C in the hot spell.
+    float egt_goal = 180.0f + 0.25f * (s_act - 1010.0f) + 320.0f * hump(t, 115.0f, 160.0f);
+    float ke = dt / 1.5f;
+    s_egt += (egt_goal - s_egt) * (ke > 1.0f ? 1.0f : ke);
+    put(s, JD_SIG_EGT, s_egt + noise(1.0f), JD_UNIT_C, now);
 }

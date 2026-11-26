@@ -14,8 +14,9 @@ static const poll_def_t OBD_POLLS[] = {
     { { 0x01, 0x05 }, 2, 5000 },  // coolant (changes slowly)
 };
 static const poll_def_t TP20_POLLS[] = {
-    // Group 099 (EGT) is allowlisted but not on screen for now (Sam, 2026-11-19).
     { { 0x21, 0x0B }, 2, 500 },   // group 011: RPM + boost specified/actual (the graph: 2 points/s)
+    { { 0x21, 0x63 }, 2, 2000 },  // group 099: EGT before turbo (Sam 2026-11-25); 2 s keeps the
+                                  // total (2.7/s) under the scheduler's 300 ms gap with room for 011
     { { 0x21, 0x07 }, 2, 5000 },  // group 007: coolant (changes slowly)
 };
 // What we send after opening the channel, before any group read. VCDS (2026-11-18):
